@@ -23,7 +23,13 @@ data class StoredMessage(
     val messageId: String = "",
     val receivedAt: Long = 0,
     val read: Boolean = false,
-)
+) {
+    /** What the inbox offers on the clipboard: the title, then the body (or the URL when there is no body). */
+    fun copyText(): String = listOfNotNull(
+        title?.takeIf { it.isNotBlank() },
+        body?.takeIf { it.isNotBlank() } ?: url?.takeIf { it.isNotBlank() },
+    ).joinToString("\n")
+}
 
 /**
  * Inbox backed by a JSON file instead of Room.

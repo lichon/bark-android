@@ -5,6 +5,7 @@ import io.github.lichon.abark.data.AppSettings
 import io.github.lichon.abark.data.MessageStore
 import io.github.lichon.abark.data.PrefsIdentityStore
 import io.github.lichon.abark.notify.NotificationRenderer
+import io.github.lichon.abark.notify.NotificationSpeaker
 import io.github.lichon.abark.apns.transport.CourierStatus
 import java.io.File
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -31,6 +32,9 @@ object Graph {
     val messages: MessageStore by lazy { MessageStore(File(requireContext().filesDir, "messages.json")) }
 
     val notifier: NotificationRenderer by lazy { NotificationRenderer(requireContext()) }
+
+    /** Optional text-to-speech for arriving pushes; owns a lazily created TTS engine. */
+    val speaker: NotificationSpeaker by lazy { NotificationSpeaker(requireContext()) }
 
     /** Current courier state, rendered by the service's notification and by the UI. */
     val status: MutableStateFlow<CourierStatus> = MutableStateFlow(CourierStatus.Idle)

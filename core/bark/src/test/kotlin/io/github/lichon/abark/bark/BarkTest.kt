@@ -189,6 +189,25 @@ class NotificationSpecTest {
         assertTrue(spec.isSilent)
         assertEquals(7, spec.badge)
     }
+
+    @Test
+    fun `spoken text joins title, subtitle and body and drops repeats`() {
+        val spec = NotificationSpec.from(
+            BarkPayload.parse("""{"aps":{"alert":{"title":"Build","subtitle":"CI","body":"Build"}}}"""),
+        )
+        assertEquals("Build. CI", spec.spokenText)
+    }
+
+    @Test
+    fun `pushes without readable content are not spoken`() {
+        val bodyOnly = NotificationSpec.from(BarkPayload.parse("""{"aps":{"alert":"hi"}}"""))
+        assertEquals("hi", bodyOnly.spokenText)
+
+        assertNull(NotificationSpec.from(BarkPayload.parse("""{"aps":{},"badge":"1"}""")).spokenText)
+        assertNull(NotificationSpec.from(BarkPayload.parse("""{"aps":{},"delete":"feedface"}""")).spokenText)
+        assertNull(NotificationSpec.from(BarkPayload.parse("""{"aps":{},"ciphertext":"AAAA"}""")).spokenText)
+        assertNull(NotificationSpec.from(BarkPayload.parse("""{"aps":{"alert":{"title":"  "}}}""")).spokenText)
+    }
 }
 
 private class FakeTransport(private val respond: (HttpPost) -> HttpResult) : HttpTransport {

@@ -74,6 +74,7 @@ class CourierService : Service() {
     override fun onDestroy() {
         loop?.stop()
         running.set(false)
+        Graph.speaker.release()
         Graph.status.value = CourierStatus.Idle
         super.onDestroy()
     }
@@ -198,6 +199,8 @@ class CourierService : Service() {
         }
 
         val shown = Graph.notifier.show(spec)
+        // Speak only what the user can also see: a blocked notification must not turn into audio.
+        if (shown && Graph.settings.ttsEnabled) Graph.speaker.speak(spec)
         if (spec.archive) {
             Graph.messages.record(
                 id = spec.id,

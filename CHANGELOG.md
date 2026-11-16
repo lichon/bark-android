@@ -4,7 +4,7 @@ Release notes for a tag are extracted from the matching section by `.github/work
 GitHub release body (which the in-app update screen shows). Keep sections short, user-facing, and in the app's
 voice. Format: `## [<version>] - <date>` where `<version>` matches the tag without the `v`.
 
-## [Unreleased]
+## [0.2.0] - 2026-11-17
 
 ### Added
 - APNs courier engine: framing/codec, Connect/Filter/ScopedToken/SendMessage/KeepAlive commands, TLS channel with ALPN,
@@ -20,6 +20,11 @@ voice. Format: `## [<version>] - <date>` where `<version>` matches the tag witho
   watchdog receivers, Compose UI, in-app update check.
 - Three-tab UI — **Servers** (courier state, server URL/key, share link), **Messages** (inbox with unread badge) and
   **Settings** (delivery permissions, identity, updates) — replacing the single scrolling screen.
+- Inbox actions: long-press a message for **Copy content** (title and body, or the URL when there is no body) and
+  **Delete** (removes the stored message and its notification).
+- Spoken notifications: **Settings → Delivery → Read notifications aloud** reads each push with the system
+  text-to-speech engine (title, subtitle and body, repeats dropped). Off by default; passive pushes are not spoken and
+  a silent/vibrate phone stays quiet.
 - CLI harness (`tools/cli`): `activate`, `run`, `push`, `link`, `show`.
 - 158 JVM unit tests covering protocol, activation (including the embedded FairPlay pair and the live response
   shapes), transport, payloads and release selection.

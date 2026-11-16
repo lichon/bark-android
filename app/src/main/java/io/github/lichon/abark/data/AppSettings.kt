@@ -43,6 +43,11 @@ class AppSettings(context: Context) {
         get() = prefs.getBoolean(KEY_AUTO_START, true)
         set(value) = prefs.edit().putBoolean(KEY_AUTO_START, value).apply()
 
+    /** Read incoming pushes aloud with the platform text-to-speech engine. Off by default: this makes noise. */
+    var ttsEnabled: Boolean
+        get() = prefs.getBoolean(KEY_TTS, false)
+        set(value) = prefs.edit().putBoolean(KEY_TTS, value).apply()
+
     /** Registered scoped token, for the diagnostics card. Not authoritative — the identity file is. */
     var lastRegisteredToken: String?
         get() = prefs.getString(KEY_REGISTERED_TOKEN, null)
@@ -67,6 +72,7 @@ class AppSettings(context: Context) {
         private const val KEY_DEVICE_KEY = "device_key"
         private const val KEY_KEEPALIVE = "keepalive_seconds"
         private const val KEY_AUTO_START = "auto_start"
+        private const val KEY_TTS = "tts_enabled"
         private const val KEY_REGISTERED_TOKEN = "registered_token"
     }
 }

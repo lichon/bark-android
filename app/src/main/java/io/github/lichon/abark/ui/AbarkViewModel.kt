@@ -38,6 +38,7 @@ data class UiState(
     val deviceKey: String = "",
     val keepAliveSeconds: Int = 120,
     val autoStart: Boolean = true,
+    val ttsEnabled: Boolean = false,
     val hasIdentity: Boolean = false,
     val identitySummary: String = "",
     val scopedToken: String = "",
@@ -87,6 +88,7 @@ class AbarkViewModel(application: Application) : AndroidViewModel(application) {
                 deviceKey = settings.deviceKey,
                 keepAliveSeconds = settings.keepAliveSeconds,
                 autoStart = settings.autoStart,
+                ttsEnabled = settings.ttsEnabled,
                 hasIdentity = record != null,
                 identitySummary = record?.let { r ->
                     "${r.deviceClass} · ${r.productType} ${r.productVersion} · cert ${if (r.isCertificateExpired()) "expired" else "valid"}"
@@ -146,6 +148,14 @@ class AbarkViewModel(application: Application) : AndroidViewModel(application) {
     fun setAutoStart(enabled: Boolean) {
         settings.autoStart = enabled
         _state.update { it.copy(autoStart = enabled) }
+    }
+
+    /** Speech is a side effect of the courier, not of the UI, so the setting alone is enough — no reconnect needed. */
+    fun setTts(enabled: Boolean) {
+        settings.ttsEnabled = enabled
+        _state.update { it.copy(ttsEnabled = enabled) }
+        // A spoken confirmation doubles as a check that an engine is installed and working.
+        if (enabled) Graph.speaker.speak("Spoken notifications are on") else Graph.speaker.release()
     }
 
     /**
@@ -272,16 +282,35 @@ class AbarkViewModel(application: Application) : AndroidViewModel(application) {
         Graph.messages.markRead(id)
     }
 
+    fun deleteMessage(id: String) {
+        Graph.messages.delete(id)
+        Graph.notifier.cancel(id)
+        _state.update { it.copy(notice = "Message deleted") }
+    }
+
+    fun copyMessage(id: String) {
+        val text = _state.value.messages.firstOrNull { it.id == id }?.copyText().orEmpty()
+        if (text.isBlank()) {
+            _state.update { it.copy(notice = "Nothing to copy") }
+            return
+        }
+        copyToClipboard("ABark message", text)
+        _state.update { it.copy(notice = "Message copied") }
+    }
+
     fun dismissNotice() {
         _state.update { it.copy(notice = null) }
     }
 
     fun copyShareLink() {
         val server = settings.server() ?: return
-        val app = getApplication<Application>()
-        val clipboard = app.getSystemService(ClipboardManager::class.java)
-        clipboard?.setPrimaryClip(ClipData.newPlainText("ABark share link", server.shareLink()))
+        copyToClipboard("ABark share link", server.shareLink())
         _state.update { it.copy(notice = "Share link copied") }
+    }
+
+    private fun copyToClipboard(label: String, text: String) {
+        val clipboard = getApplication<Application>().getSystemService(ClipboardManager::class.java)
+        clipboard?.setPrimaryClip(ClipData.newPlainText(label, text))
     }
 
     private fun UiState.withStatus(status: CourierStatus): UiState = copy(

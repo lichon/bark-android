@@ -106,6 +106,8 @@ fun AbarkScreen(
                     notificationsGranted = notificationsGranted,
                     onClear = viewModel::clearMessages,
                     onMarkRead = viewModel::markRead,
+                    onCopy = viewModel::copyMessage,
+                    onDelete = viewModel::deleteMessage,
                     onRequestNotifications = onRequestNotifications,
                 )
 
@@ -113,6 +115,7 @@ fun AbarkScreen(
                     state = state,
                     notificationsGranted = notificationsGranted,
                     onAutoStart = viewModel::setAutoStart,
+                    onTts = viewModel::setTts,
                     onKeepAlive = viewModel::setKeepAlive,
                     onActivate = viewModel::activateIdentity,
                     onImport = { showImport = true },

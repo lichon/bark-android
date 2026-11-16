@@ -39,6 +39,7 @@ fun SettingsTab(
     state: UiState,
     notificationsGranted: Boolean,
     onAutoStart: (Boolean) -> Unit,
+    onTts: (Boolean) -> Unit,
     onKeepAlive: (Int) -> Unit,
     onActivate: () -> Unit,
     onImport: () -> Unit,
@@ -79,6 +80,18 @@ fun SettingsTab(
                         )
                     }
                     Switch(checked = state.autoStart, onCheckedChange = onAutoStart)
+                }
+                HorizontalDivider()
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Read notifications aloud", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "speaks each push with the system text-to-speech engine; passive pushes stay silent",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(checked = state.ttsEnabled, onCheckedChange = onTts)
                 }
                 HorizontalDivider()
                 KeepAliveRow(
