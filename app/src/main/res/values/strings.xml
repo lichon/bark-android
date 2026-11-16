@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ABark</string>
+    <string name="status_channel_name">Push connection</string>
+    <string name="default_channel_name">Notifications</string>
+    <string name="service_title">ABark</string>
+    <string name="action_stop">Stop</string>
+    <string name="action_copy">Copy</string>
+    <string name="action_open">Open</string>
+    <string name="action_dismiss">Dismiss</string>
+</resources>

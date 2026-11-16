@@ -1,0 +1,26 @@
+# Build output
+build/
+.gradle/
+local.properties
+captures/
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# IDE
+.idea/
+*.iml
+.DS_Store
+
+# Signing material — never commit. `keystore.properties` is written by CI from secrets.
+*.jks
+*.keystore
+keystore.properties
+signing/
+
+# Python helpers / traces
+__pycache__/
+*.pyc
+.venv/
+tools/trace-diff/vectors/*.bin

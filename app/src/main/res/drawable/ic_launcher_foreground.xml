@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Ring mark taken from `lichon/bark-desktop`: `bark_pc/assets/icons/app.png` draws a
+  #2563EB ring on a transparent interior (see bark_pc/platform/windows/tray.py
+  `render_icon`). Adaptive icons cannot be transparent, so the ring is drawn in white
+  on the brand-blue plate (`@color/ic_launcher_background`) and kept inside the 66dp
+  safe zone.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M54,23 A31,31 0 1,1 54,85 A31,31 0 1,1 54,23 Z"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="3.4" />
+</vector>
