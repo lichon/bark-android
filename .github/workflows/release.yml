@@ -72,10 +72,13 @@ jobs:
 
       - name: Test, lint, assemble
         run: |
+          # Windows checkouts can lose the exec bit; the wrapper is not runnable otherwise.
+          chmod +x gradlew
           ./gradlew --no-daemon \
             -PversionName="${{ steps.v.outputs.name }}" \
             -PversionCode="${{ steps.v.outputs.code }}" \
-            :core:net:test :core:apns:test :core:bark:test :core:update:test             :app:testDebugUnitTest :app:lintRelease :app:assembleRelease
+            :core:net:test :core:apns:test :core:bark:test :core:update:test \
+            :app:testDebugUnitTest :app:lintRelease :app:assembleRelease
 
       - name: Verify signature and package
         id: apk
