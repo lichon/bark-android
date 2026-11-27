@@ -41,18 +41,14 @@ data class NotificationSpec(
     /**
      * What a text-to-speech engine should read for this push, or null when there is nothing to say.
      *
-     * Title/subtitle/body read in that order, deduplicated (Bark pushes often repeat the title as the body) and
-     * joined with a full stop so the engine pauses between fields. Encrypted and delete pushes are silent: one has no
+     * Only the body is read. Title and subtitle are metadata — a source name and a category the user already knows —
+     * and hearing them on every push only delays the payload. Encrypted and delete pushes are silent: one has no
      * readable text and the other exists only to remove a notification.
      */
     val spokenText: String?
         get() {
             if (isDelete || encrypted) return null
-            val parts = listOfNotNull(title, subtitle, body)
-                .map { it.trim() }
-                .filter { it.isNotEmpty() }
-                .distinct()
-            return parts.takeIf { it.isNotEmpty() }?.joinToString(". ")
+            return body?.trim()?.takeIf { it.isNotEmpty() }
         }
 
     /** Notification channels are per group; ungrouped pushes share one default channel. */

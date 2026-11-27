@@ -191,11 +191,17 @@ class NotificationSpecTest {
     }
 
     @Test
-    fun `spoken text joins title, subtitle and body and drops repeats`() {
+    fun `spoken text is the body only`() {
         val spec = NotificationSpec.from(
-            BarkPayload.parse("""{"aps":{"alert":{"title":"Build","subtitle":"CI","body":"Build"}}}"""),
+            BarkPayload.parse("""{"aps":{"alert":{"title":"Build","subtitle":"CI","body":"Tests failed"}}}"""),
         )
-        assertEquals("Build. CI", spec.spokenText)
+        assertEquals("Tests failed", spec.spokenText)
+    }
+
+    @Test
+    fun `pushes with only a title or subtitle are not spoken`() {
+        assertNull(NotificationSpec.from(BarkPayload.parse("""{"aps":{"alert":{"title":"Build"}}}""")).spokenText)
+        assertNull(NotificationSpec.from(BarkPayload.parse("""{"aps":{"alert":{"subtitle":"CI"}}}""")).spokenText)
     }
 
     @Test
