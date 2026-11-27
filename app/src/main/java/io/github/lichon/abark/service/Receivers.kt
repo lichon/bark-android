@@ -18,17 +18,20 @@ class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         Graph.init(context)
         if (!Graph.settings.autoStart) return
-        if (Graph.identityStore.load() == null) return
+        if (!hasWork()) return
         CourierService.start(context)
         RestartReceiver.schedule(context)
     }
+
+    private fun hasWork(): Boolean =
+        Graph.identityStore.load() != null || Graph.settings.realtimeConfig() != null
 }
 
 class RestartReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         Graph.init(context)
         if (!Graph.settings.autoStart) return
-        if (Graph.identityStore.load() == null) return
+        if (Graph.identityStore.load() == null && Graph.settings.realtimeConfig() == null) return
         CourierService.start(context)
     }
 

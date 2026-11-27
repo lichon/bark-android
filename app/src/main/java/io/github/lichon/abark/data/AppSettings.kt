@@ -2,6 +2,7 @@ package io.github.lichon.abark.data
 
 import android.content.Context
 import io.github.lichon.abark.bark.BarkServer
+import java.net.URI
 
 /**
  * Non-secret settings. The device key is a shared secret in the sense that anyone holding it can push to this device,
@@ -53,6 +54,37 @@ class AppSettings(context: Context) {
         get() = prefs.getString(KEY_REGISTERED_TOKEN, null)
         set(value) = prefs.edit().putString(KEY_REGISTERED_TOKEN, value).apply()
 
+    /** Optional second transport: receive broadcasts from a Supabase Realtime room alongside the APNs courier. */
+    var realtimeEnabled: Boolean
+        get() = prefs.getBoolean(KEY_REALTIME_ENABLED, false)
+        set(value) = prefs.edit().putBoolean(KEY_REALTIME_ENABLED, value).apply()
+
+    /** Supabase project URL (`https://project.supabase.co`). Empty until configured. */
+    var realtimeUrl: String
+        get() = prefs.getString(KEY_REALTIME_URL, "").orEmpty()
+        set(value) = prefs.edit().putString(KEY_REALTIME_URL, value.trim().trimEnd('/')).apply()
+
+    /** The project's anon/publishable key. Like the device key, anyone holding it can read the room. */
+    var realtimeKey: String
+        get() = prefs.getString(KEY_REALTIME_KEY, "").orEmpty()
+        set(value) = prefs.edit().putString(KEY_REALTIME_KEY, value.trim()).apply()
+
+    var realtimeRoom: String
+        get() = prefs.getString(KEY_REALTIME_ROOM, DEFAULT_REALTIME_ROOM).orEmpty()
+            .ifBlank { DEFAULT_REALTIME_ROOM }
+        set(value) = prefs.edit()
+            .putString(KEY_REALTIME_ROOM, value.trim().ifBlank { DEFAULT_REALTIME_ROOM })
+            .apply()
+
+    /** Everything the receiver needs, or null while the option is off or incomplete. */
+    fun realtimeConfig(): RealtimeRoomConfig? {
+        if (!realtimeEnabled) return null
+        val url = normalizeRealtimeUrl(realtimeUrl) ?: return null
+        val key = realtimeKey.trim()
+        if (key.isBlank()) return null
+        return RealtimeRoomConfig(url = url, key = key, room = realtimeRoom)
+    }
+
     /** A usable push target: the server URL plus the key the server assigned during registration. */
     val hasServer: Boolean get() = serverUrl.isNotBlank() && deviceKey.isNotBlank()
 
@@ -64,15 +96,40 @@ class AppSettings(context: Context) {
         const val MAX_KEEPALIVE_SECONDS: Int = 300
         const val DEFAULT_KEEPALIVE_SECONDS: Int = 120
         const val DEFAULT_SERVER: String = BarkServer.DEFAULT_SERVER
+        const val DEFAULT_REALTIME_ROOM: String = "bark"
 
         /** Accepts what a user types/pastes: blank means the default, so `BarkServer` never sees an empty URL. */
         fun normalizeServerUrl(raw: String): String = raw.trim().ifBlank { DEFAULT_SERVER }
+
+        /**
+         * Accepts `project.supabase.co` or the dashboard's `https://project.supabase.co` URL.
+         * Returns null when the value is not an http(s) project URL without credentials/query/fragment.
+         */
+        fun normalizeRealtimeUrl(raw: String): String? {
+            val trimmed = raw.trim()
+            if (trimmed.isEmpty()) return null
+            val withScheme = if ("://" in trimmed) trimmed else "https://$trimmed"
+            val uri = runCatching { URI(withScheme) }.getOrNull() ?: return null
+            val scheme = uri.scheme?.lowercase() ?: return null
+            if (scheme !in setOf("http", "https")) return null
+            if (uri.host.isNullOrBlank()) return null
+            if (uri.userInfo != null || uri.rawQuery != null || uri.rawFragment != null) return null
+            // The SDK appends its own module paths; a URL pasted from the API docs would be doubled.
+            if (SDK_MODULE_PATHS.any { uri.path.orEmpty().contains(it) }) return null
+            return "$scheme://${withScheme.substringAfter("://")}".trimEnd('/')
+        }
+
         private const val PREFS = "abark.settings"
+        private val SDK_MODULE_PATHS = listOf("realtime/v1", "auth/v1", "storage/v1", "rest/v1")
         private const val KEY_SERVER_URL = "server_url"
         private const val KEY_DEVICE_KEY = "device_key"
         private const val KEY_KEEPALIVE = "keepalive_seconds"
         private const val KEY_AUTO_START = "auto_start"
         private const val KEY_TTS = "tts_enabled"
         private const val KEY_REGISTERED_TOKEN = "registered_token"
+        private const val KEY_REALTIME_ENABLED = "realtime_enabled"
+        private const val KEY_REALTIME_URL = "realtime_url"
+        private const val KEY_REALTIME_KEY = "realtime_key"
+        private const val KEY_REALTIME_ROOM = "realtime_room"
     }
 }

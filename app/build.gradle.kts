@@ -98,6 +98,8 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
 
     implementation(libs.okhttp)
+    implementation(libs.supabase.realtime)
+    implementation(libs.ktor.client.okhttp)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
 }

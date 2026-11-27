@@ -20,6 +20,7 @@ import io.github.lichon.abark.data.StoredMessage
 import io.github.lichon.abark.data.UpdateChecker
 import io.github.lichon.abark.data.UpdateSummary
 import io.github.lichon.abark.service.CourierService
+import io.github.lichon.abark.service.RoomStatus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -39,6 +40,14 @@ data class UiState(
     val keepAliveSeconds: Int = 120,
     val autoStart: Boolean = true,
     val ttsEnabled: Boolean = false,
+    val realtimeEnabled: Boolean = false,
+    val realtimeUrl: String = "",
+    val realtimeKey: String = "",
+    val realtimeRoom: String = AppSettings.DEFAULT_REALTIME_ROOM,
+    val roomStatusTitle: String = "Off",
+    val roomStatusDetail: String = "",
+    val roomHealthy: Boolean = false,
+    val roomActive: Boolean = false,
     val hasIdentity: Boolean = false,
     val identitySummary: String = "",
     val scopedToken: String = "",
@@ -48,6 +57,9 @@ data class UiState(
 ) {
     /** A server is only usable once both halves are known. */
     val hasServer: Boolean get() = serverUrl.isNotBlank() && deviceKey.isNotBlank()
+
+    /** The room is only joinable once the switch is on and the URL/key are present. */
+    val hasRealtime: Boolean get() = realtimeEnabled && realtimeUrl.isNotBlank() && realtimeKey.isNotBlank()
 }
 
 /**
@@ -65,6 +77,9 @@ class AbarkViewModel(application: Application) : AndroidViewModel(application) {
         refreshFromSettings()
         viewModelScope.launch {
             Graph.status.collect { status -> _state.update { it.withStatus(status) } }
+        }
+        viewModelScope.launch {
+            Graph.roomStatus.collect { status -> _state.update { it.withRoomStatus(status) } }
         }
         viewModelScope.launch {
             Graph.messages.messages.collect { messages -> _state.update { it.copy(messages = messages) } }
@@ -89,13 +104,17 @@ class AbarkViewModel(application: Application) : AndroidViewModel(application) {
                 keepAliveSeconds = settings.keepAliveSeconds,
                 autoStart = settings.autoStart,
                 ttsEnabled = settings.ttsEnabled,
+                realtimeEnabled = settings.realtimeEnabled,
+                realtimeUrl = settings.realtimeUrl,
+                realtimeKey = settings.realtimeKey,
+                realtimeRoom = settings.realtimeRoom,
                 hasIdentity = record != null,
                 identitySummary = record?.let { r ->
                     "${r.deviceClass} · ${r.productType} ${r.productVersion} · cert ${if (r.isCertificateExpired()) "expired" else "valid"}"
                 }.orEmpty(),
                 scopedToken = record?.scopedTokenHex.orEmpty(),
                 versionName = appVersionName(),
-            ).withStatus(Graph.status.value)
+            ).withStatus(Graph.status.value).withRoomStatus(Graph.roomStatus.value)
         }
     }
 
@@ -114,14 +133,17 @@ class AbarkViewModel(application: Application) : AndroidViewModel(application) {
     fun register(serverUrl: String) {
         settings.serverUrl = AppSettings.normalizeServerUrl(serverUrl)
         refreshFromSettings()
+        if (_state.value.busy) return
         if (!_state.value.hasIdentity) {
-            _state.update { it.copy(notice = "Server saved — activate or import an identity to register") }
+            // Registration needs a scoped token, and the token only exists on a live courier connection. Create the
+            // identity first; activation starts the courier, which registers and fetches the device key.
+            _state.update { it.copy(notice = "Activating a device identity before registering…") }
+            activateIdentity()
             return
         }
         // Reconnecting picks up the new server and re-registers the scoped token there.
-        CourierService.stop(getApplication())
-        CourierService.start(getApplication())
-        _state.update { it.copy(notice = "Registering with ${settings.serverUrl}") }
+        CourierService.reconnect(getApplication())
+        _state.update { it.copy(notice = "Connecting to ${settings.serverUrl} and fetching a device key") }
     }
 
     /** Keepalive is baked into the courier config at connect time, so a change takes effect on the next connection. */
@@ -138,10 +160,7 @@ class AbarkViewModel(application: Application) : AndroidViewModel(application) {
         }
         settings.keepAliveSeconds = seconds
         refreshFromSettings()
-        if (_state.value.running) {
-            CourierService.stop(getApplication())
-            CourierService.start(getApplication())
-        }
+        if (_state.value.running) CourierService.reconnect(getApplication())
         _state.update { it.copy(notice = "Keepalive set to ${settings.keepAliveSeconds}s") }
     }
 
@@ -156,6 +175,50 @@ class AbarkViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(ttsEnabled = enabled) }
         // A spoken confirmation doubles as a check that an engine is installed and working.
         if (enabled) Graph.speaker.speak("Spoken notifications are on") else Graph.speaker.release()
+    }
+
+    /** Enabling starts the optional room; disabling stops it while keeping the saved URL, key and room. */
+    fun setRealtimeEnabled(enabled: Boolean) {
+        settings.realtimeEnabled = enabled
+        refreshFromSettings()
+        CourierService.refreshRoom(getApplication())
+        val notice = when {
+            !enabled -> "Realtime room disabled"
+            !_state.value.hasRealtime -> "Add the project URL and anon key to join the room"
+            else -> "Connecting to room ${settings.realtimeRoom}"
+        }
+        _state.update { it.copy(notice = notice) }
+    }
+
+    /** Persists the room fields, enables the room and connects immediately. */
+    fun connectRealtime(url: String, key: String, room: String) {
+        val normalizedUrl = AppSettings.normalizeRealtimeUrl(url)
+        if (url.isNotBlank() && normalizedUrl == null) {
+            _state.update { it.copy(notice = "Project URL must look like https://project.supabase.co") }
+            return
+        }
+        val trimmedKey = key.trim()
+        if (trimmedKey.any { it.isWhitespace() }) {
+            _state.update { it.copy(notice = "The anon key must not contain spaces") }
+            return
+        }
+        val trimmedRoom = room.trim().ifBlank { AppSettings.DEFAULT_REALTIME_ROOM }
+        if (trimmedRoom.length > MAX_REALTIME_ROOM_LENGTH) {
+            _state.update { it.copy(notice = "Room names are at most $MAX_REALTIME_ROOM_LENGTH characters") }
+            return
+        }
+        if (normalizedUrl == null || trimmedKey.isEmpty()) {
+            _state.update { it.copy(notice = "Enter the project URL and anon key to connect") }
+            return
+        }
+
+        settings.realtimeUrl = normalizedUrl
+        settings.realtimeKey = trimmedKey
+        settings.realtimeRoom = trimmedRoom
+        settings.realtimeEnabled = true
+        refreshFromSettings()
+        CourierService.refreshRoom(getApplication())
+        _state.update { it.copy(notice = "Connecting to room $trimmedRoom") }
     }
 
     /**
@@ -192,7 +255,8 @@ class AbarkViewModel(application: Application) : AndroidViewModel(application) {
                     }.fold(
                         onSuccess = {
                             CourierService.start(getApplication())
-                            "Activated ${params.uniqueDeviceId.take(8)}…; certificate valid until ${device.notAfter}"
+                            "Activated ${params.uniqueDeviceId.take(8)}…; connecting to " +
+                                "${settings.serverUrl} and fetching a device key"
                         },
                         onFailure = { "Activated, but saving the identity failed: ${it.message}" },
                     )
@@ -223,8 +287,8 @@ class AbarkViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun start() {
-        if (!_state.value.hasIdentity) {
-            _state.update { it.copy(notice = "Activate or import an identity first (Settings tab)") }
+        if (!_state.value.hasIdentity && !_state.value.hasRealtime) {
+            _state.update { it.copy(notice = "Activate an identity or configure a Supabase room first") }
             return
         }
         CourierService.start(getApplication())
@@ -334,4 +398,31 @@ class AbarkViewModel(application: Application) : AndroidViewModel(application) {
         },
         healthy = status is CourierStatus.Connected,
     )
+
+    private fun UiState.withRoomStatus(status: RoomStatus): UiState = copy(
+        roomHealthy = status is RoomStatus.Connected,
+        roomActive = status is RoomStatus.Connecting || status is RoomStatus.Connected ||
+            status is RoomStatus.Reconnecting,
+        roomStatusTitle = when (status) {
+            RoomStatus.Idle -> "Not connected"
+            is RoomStatus.Connecting -> "Connecting…"
+            is RoomStatus.Connected -> "Connected"
+            is RoomStatus.Reconnecting -> "Reconnecting…"
+            is RoomStatus.Stopped -> "Stopped"
+        },
+        roomStatusDetail = when (status) {
+            RoomStatus.Idle -> ""
+            is RoomStatus.Connecting -> "${status.room} · ${status.host} (attempt ${status.attempt})"
+            is RoomStatus.Connected -> "${status.room} · ${status.host}"
+            is RoomStatus.Reconnecting ->
+                "attempt ${status.attempt}" +
+                    (if (status.delayMillis > 0) " in ${status.delayMillis / 1000}s" else "") +
+                    (status.detail?.takeIf { it.isNotBlank() }?.let { " · $it" } ?: "")
+            is RoomStatus.Stopped -> status.detail.orEmpty()
+        },
+    )
+
+    private companion object {
+        const val MAX_REALTIME_ROOM_LENGTH = 155
+    }
 }

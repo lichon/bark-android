@@ -7,6 +7,7 @@ import io.github.lichon.abark.data.PrefsIdentityStore
 import io.github.lichon.abark.notify.NotificationRenderer
 import io.github.lichon.abark.notify.NotificationSpeaker
 import io.github.lichon.abark.apns.transport.CourierStatus
+import io.github.lichon.abark.service.RoomStatus
 import java.io.File
 import kotlinx.coroutines.flow.MutableStateFlow
 
@@ -38,6 +39,9 @@ object Graph {
 
     /** Current courier state, rendered by the service's notification and by the UI. */
     val status: MutableStateFlow<CourierStatus> = MutableStateFlow(CourierStatus.Idle)
+
+    /** State of the optional Supabase Realtime room. */
+    val roomStatus: MutableStateFlow<RoomStatus> = MutableStateFlow(RoomStatus.Idle)
 
     /** Result of the last registration attempt, surfaced in the UI. */
     val registration: MutableStateFlow<String?> = MutableStateFlow(null)

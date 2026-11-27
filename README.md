@@ -13,11 +13,11 @@ Application ID: `io.github.lichon.abark` · package root: `io.github.lichon.abar
 | Module | Platform | Contents |
 | --- | --- | --- |
 | `:core:apns` | JVM | Courier wire protocol (`Packet`, `Commands`), Alberts activation (plist, CSR, FairPlay signing, certificate intake), TLS transport + session state machine + reconnect loop, identity store |
-| `:core:bark` | JVM | Bark payload parser → `NotificationSpec`, `bark-server` API client (`/register`, `/push`), `bark://` link parsing |
+| `:core:bark` | JVM | Bark payload parser → `NotificationSpec`, `bark-server` API client (`/register`, `/push`), `bark://` link parsing, Supabase room message mapping |
 | `:core:net` | JVM | `HttpTransport` abstraction + `HttpURLConnection` implementation |
 | `:core:update` | JVM | SemVer, release selection, GitHub Releases source |
 | `:core:update-android` | Android | `PackageInstaller` install flow, APK signature verification, DataStore cache |
-| `:app` | Android | Foreground-service courier, notification renderer, inbox, Compose UI, boot/watchdog receivers |
+| `:app` | Android | Foreground-service courier + optional Supabase Realtime room, notification renderer, inbox, Compose UI, boot/watchdog receivers |
 | `:tools:cli` | JVM | `activate` / `run` / `push` / `link` / `show` — the phase-0 harness |
 
 ## Quick start (desktop CLI)
@@ -50,6 +50,11 @@ with — the key is read-only in the UI and the share link is built from it. **S
 device** and **Import identity** (paste the JSON from `tools/cli activate`). Allow notifications and battery-optimisation
 exemption — both are required for reliable delivery on stock and OEM ROMs. The **Messages** tab is the local inbox, and
 the badge on the tab counts unread pushes.
+
+**Servers** also has an optional **Supabase Realtime** card: enter the project URL, the project's anon/publishable key
+and a room name, then flip **Join a room** on. The app joins `room:<name>:messages` with the same `ChannelMessage` shape
+as the desktop client, so room messages become notifications and inbox rows alongside the APNs courier (the two
+transports run independently). Leaving the switch off keeps the fields saved but never connects.
 
 The bundled FairPlay key is Apple-proprietary material (PLAN.md decision 2): fine for a personal build, **do not
 distribute** the APK. Activation certifies a fresh device key each time, so a re-activation replaces the stored identity.

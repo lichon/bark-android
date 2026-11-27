@@ -33,39 +33,78 @@ import io.github.lichon.abark.bark.BarkPayload
 import io.github.lichon.abark.bark.BarkResult
 import io.github.lichon.abark.bark.BarkServer
 import io.github.lichon.abark.bark.NotificationSpec
+import io.github.lichon.abark.data.RealtimeRoomConfig
 import io.github.lichon.abark.ui.MainActivity
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * The always-on half of the app: a foreground service that owns the courier socket.
+ * The always-on half of the app: a foreground service that owns the courier socket and the optional Supabase room.
  *
- * `foregroundServiceType="remoteMessaging"` keeps the process alive while the socket idles; the loop itself runs on a
- * plain thread because [CourierLoop] is blocking by design, and the loop is the only thing that ever touches the
- * socket. Stopping is therefore just `loop.stop()`, which closes the channel and unblocks the read.
+ * `foregroundServiceType="remoteMessaging"` keeps the process alive while a connection idles; both transports run on
+ * their own plain threads because [CourierLoop] and [SupabaseRoomReceiver] are blocking by design. Either transport can
+ * run alone, so stopping is just closing the loops, and the service stays up while at least one still has work.
  */
 class CourierService : Service() {
 
-    private val running = AtomicBoolean(false)
+    private val courierRunning = AtomicBoolean(false)
+    private val roomRunning = AtomicBoolean(false)
+    private val stopRequested = AtomicBoolean(false)
+    private val reconnectRequested = AtomicBoolean(false)
+    private val roomGeneration = AtomicInteger(0)
 
     @Volatile
     private var loop: CourierLoop? = null
 
+    @Volatile
+    private var room: SupabaseRoomReceiver? = null
+
     private var worker: Thread? = null
+    private var roomWorker: Thread? = null
 
     override fun onCreate() {
         super.onCreate()
         Graph.init(this)
         ensureStatusChannel()
-        startForegroundCompat(statusNotification(CourierStatus.Idle))
+        startForegroundCompat(statusNotification())
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
-            loop?.stop()
-            stopSelf()
-            return START_NOT_STICKY
+        when (intent?.action) {
+            ACTION_STOP -> {
+                stopRequested.set(true)
+                reconnectRequested.set(false)
+                stopRoom()
+                loop?.stop()
+                stopSelf()
+                return START_NOT_STICKY
+            }
+
+            ACTION_REFRESH -> {
+                // Room settings changed: reconnect just the room, leaving a running courier untouched.
+                stopRequested.set(false)
+                stopRoom()
+                startRoomIfConfigured()
+                if (!courierRunning.get() && !roomRunning.get()) stopSelf()
+                return START_STICKY
+            }
+
+            ACTION_RECONNECT -> {
+                stopRequested.set(false)
+                reconnectCourier()
+                if (!courierRunning.get() && !roomRunning.get()) stopSelf()
+                return START_STICKY
+            }
         }
-        startCourier()
+
+        stopRequested.set(false)
+        reconnectRequested.set(false)
+        startCourierIfConfigured()
+        startRoomIfConfigured()
+        if (!courierRunning.get() && !roomRunning.get()) {
+            updateForeground()
+            stopSelf()
+        }
         return START_STICKY
     }
 
@@ -73,22 +112,100 @@ class CourierService : Service() {
 
     override fun onDestroy() {
         loop?.stop()
-        running.set(false)
+        stopRoom()
+        courierRunning.set(false)
         Graph.speaker.release()
         Graph.status.value = CourierStatus.Idle
+        Graph.roomStatus.value = RoomStatus.Idle
         super.onDestroy()
     }
 
-    private fun startCourier() {
-        if (!running.compareAndSet(false, true)) return
+    private fun startCourierIfConfigured() {
+        if (courierRunning.get()) return
+        if (Graph.identityStore.load() == null) return
+        if (!courierRunning.compareAndSet(false, true)) return
         worker = Thread({ runCourier() }, "abark-courier").apply {
             priority = Thread.NORM_PRIORITY - 1
             start()
         }
     }
 
+    /** Close the courier socket and reconnect with the current server/keepalive without destroying the service. */
+    private fun reconnectCourier() {
+        if (courierRunning.get()) {
+            reconnectRequested.set(true)
+            loop?.stop()
+        } else {
+            startCourierIfConfigured()
+        }
+    }
+
+    private fun startRoomIfConfigured() {
+        if (roomRunning.get()) return
+        val config = Graph.settings.realtimeConfig()
+        if (config == null) {
+            Graph.roomStatus.value = RoomStatus.Idle
+            return
+        }
+        if (!roomRunning.compareAndSet(false, true)) return
+        val generation = roomGeneration.incrementAndGet()
+        Graph.roomStatus.value = RoomStatus.Connecting(config.host, config.room)
+        roomWorker = Thread({ runRoom(config, generation) }, "abark-room").apply {
+            priority = Thread.NORM_PRIORITY - 1
+            start()
+        }
+    }
+
+    private fun stopRoom() {
+        roomGeneration.incrementAndGet()
+        room?.stop()
+        room = null
+        roomRunning.set(false)
+        Graph.roomStatus.value = RoomStatus.Idle
+    }
+
+    private fun runRoom(config: RealtimeRoomConfig, generation: Int) {
+        val receiver = SupabaseRoomReceiver(
+            config = config,
+            onMessage = { raw, messageId ->
+                if (roomGeneration.get() == generation) deliverPayload(raw, messageId)
+            },
+            onStatus = { status ->
+                if (roomGeneration.get() == generation) {
+                    Graph.roomStatus.value = status
+                    updateForeground()
+                }
+            },
+        )
+        room = receiver
+        try {
+            receiver.run()
+        } catch (e: Throwable) {
+            if (roomGeneration.get() == generation) {
+                Graph.roomStatus.value = RoomStatus.Stopped(e.message)
+            }
+        } finally {
+            if (roomGeneration.get() == generation) {
+                room = null
+                roomRunning.set(false)
+                updateForeground()
+                finishIfIdle()
+            }
+        }
+    }
+
+    private fun finishIfIdle() {
+        if (courierRunning.get() || roomRunning.get()) return
+        updateForeground()
+        if (!stopRequested.get()) {
+            val settings = Graph.settings
+            val restartable = Graph.identityStore.load() != null || settings.realtimeConfig() != null
+            if (settings.autoStart && restartable) RestartReceiver.schedule(this)
+        }
+        stopSelf()
+    }
+
     private fun runCourier() {
-        var restartWanted = true
         try {
             val record = Graph.identityStore.load()
             if (record == null) {
@@ -96,7 +213,6 @@ class CourierService : Service() {
                 Graph.status.value = CourierStatus.Stopped(
                     CourierFailure(CourierFailure.Reason.ACTIVATION_REJECTED, "missing identity"),
                 )
-                restartWanted = false
                 return
             }
             var identity: DeviceIdentityRecord = record
@@ -153,7 +269,7 @@ class CourierService : Service() {
                 listener = listener,
                 statusListener = { status ->
                     Graph.status.value = status
-                    updateForeground(status)
+                    updateForeground()
                 },
             )
             loop = courier
@@ -164,26 +280,32 @@ class CourierService : Service() {
             )
         } finally {
             loop = null
-            running.set(false)
+            courierRunning.set(false)
             // The worker owns the socket, not the service lifetime: reflect the final state, arm the watchdog and let
             // the system reclaim the process. The alarm starts us again if the connection dropped on its own.
-            updateForeground(Graph.status.value)
-            if (restartWanted) RestartReceiver.schedule(this)
-            stopSelf()
+            updateForeground()
+            if (reconnectRequested.compareAndSet(true, false)) {
+                startCourierIfConfigured()
+            } else {
+                finishIfIdle()
+            }
         }
     }
 
     /** Turn one courier message into a notification and an inbox row. */
     private fun deliver(message: IncomingMessage) {
-        val messageId = message.messageId.toHex()
-        val raw = String(message.payload, Charsets.UTF_8)
+        deliverPayload(String(message.payload, Charsets.UTF_8), message.messageId.toHex())
+    }
+
+    /** Shared delivery path for the APNs courier and Supabase Realtime room. */
+    private fun deliverPayload(raw: String, sourceId: String) {
         val payload = runCatching { BarkPayload.parse(raw) }.getOrNull()
         if (payload == null) {
-            Graph.notifier.showRaw(raw, NotificationSpec.stableId(messageId, raw))
+            Graph.notifier.showRaw(raw, NotificationSpec.stableId(sourceId, raw))
             return
         }
 
-        val spec = NotificationSpec.from(payload, messageId)
+        val spec = NotificationSpec.from(payload, sourceId)
         if (spec.isDelete) {
             spec.deleteTarget?.let {
                 Graph.notifier.cancel(it)
@@ -210,18 +332,18 @@ class CourierService : Service() {
                 level = payload.level,
                 url = spec.url,
                 iconUrl = spec.iconUrl,
-                messageId = messageId,
+                messageId = sourceId,
             )
         }
         if (!shown) Graph.registration.value = "Notifications are blocked — grant the permission"
     }
 
-    private fun updateForeground(status: CourierStatus) {
+    private fun updateForeground() {
         runCatching {
             ServiceCompat.startForeground(
                 this,
                 STATUS_NOTIFICATION_ID,
-                statusNotification(status),
+                statusNotification(),
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING
                 } else {
@@ -231,15 +353,8 @@ class CourierService : Service() {
         }
     }
 
-    private fun statusNotification(status: CourierStatus): Notification {
-        val (title, text) = when (status) {
-            is CourierStatus.Connected -> "Connected" to "Waiting for pushes"
-            is CourierStatus.Connecting -> "Connecting…" to status.host
-            is CourierStatus.Reconnecting ->
-                "Reconnecting…" to (status.failure.detail ?: status.failure.reason.name.lowercase())
-            is CourierStatus.Stopped -> "Disconnected" to (status.failure?.detail ?: "not running")
-            CourierStatus.Idle -> "Starting…" to "opening the courier connection"
-        }
+    private fun statusNotification(): Notification {
+        val (title, text) = statusText()
 
         val open = PendingIntent.getActivity(
             this,
@@ -265,6 +380,28 @@ class CourierService : Service() {
             .addAction(0, getString(R.string.action_stop), stop)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .build()
+    }
+
+    private fun statusText(): Pair<String, String> {
+        val courier = Graph.status.value
+        val room = Graph.roomStatus.value
+        return when {
+            room is RoomStatus.Connected && courier is CourierStatus.Connected ->
+                "Connected" to "Courier and room ${room.room}"
+            room is RoomStatus.Connected ->
+                "Room connected" to "${room.room} · ${room.host}"
+            room is RoomStatus.Connecting && courier !is CourierStatus.Connected ->
+                "Connecting to room…" to "${room.room} · ${room.host}"
+            room is RoomStatus.Reconnecting && courier !is CourierStatus.Connected ->
+                "Room reconnecting…" to (room.detail ?: "attempt ${room.attempt}")
+            courier is CourierStatus.Connected -> "Connected" to "Waiting for pushes"
+            courier is CourierStatus.Connecting -> "Connecting…" to courier.host
+            courier is CourierStatus.Reconnecting ->
+                "Reconnecting…" to (courier.failure.detail ?: courier.failure.reason.name.lowercase())
+            courier is CourierStatus.Stopped -> "Disconnected" to (courier.failure?.detail ?: "not running")
+            room is RoomStatus.Stopped -> "Disconnected" to (room.detail ?: "room stopped")
+            else -> "Starting…" to "opening connections"
+        }
     }
 
     private fun startForegroundCompat(notification: Notification) {
@@ -301,6 +438,8 @@ class CourierService : Service() {
     companion object {
         const val ACTION_START: String = "io.github.lichon.abark.action.START"
         const val ACTION_STOP: String = "io.github.lichon.abark.action.STOP"
+        const val ACTION_REFRESH: String = "io.github.lichon.abark.action.REFRESH"
+        const val ACTION_RECONNECT: String = "io.github.lichon.abark.action.RECONNECT"
         const val STATUS_CHANNEL: String = "abark-status"
         const val STATUS_NOTIFICATION_ID: Int = 1001
         private const val REQUEST_OPEN = 1
@@ -308,6 +447,18 @@ class CourierService : Service() {
 
         fun start(context: Context) {
             val intent = Intent(context, CourierService::class.java).setAction(ACTION_START)
+            runCatching { ContextCompat.startForegroundService(context, intent) }
+        }
+
+        /** Reconnect the optional room after its settings changed, without touching a running courier. */
+        fun refreshRoom(context: Context) {
+            val intent = Intent(context, CourierService::class.java).setAction(ACTION_REFRESH)
+            runCatching { ContextCompat.startForegroundService(context, intent) }
+        }
+
+        /** Reconnect the courier (new server/keepalive) without destroying the service. */
+        fun reconnect(context: Context) {
+            val intent = Intent(context, CourierService::class.java).setAction(ACTION_RECONNECT)
             runCatching { ContextCompat.startForegroundService(context, intent) }
         }
 

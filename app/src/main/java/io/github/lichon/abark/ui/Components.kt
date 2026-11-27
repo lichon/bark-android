@@ -63,6 +63,9 @@ fun InfoRow(
 /** Courier state: dot, phase, Activate/Start/Stop and whatever detail the transport reported. */
 @Composable
 fun StatusCard(state: UiState, onStart: () -> Unit, onStop: () -> Unit, onActivate: () -> Unit) {
+    val showRoom = !state.running && state.roomActive
+    val title = if (showRoom) state.roomStatusTitle else state.statusTitle
+    val detail = if (showRoom) state.roomStatusDetail else state.statusDetail
     SectionCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
@@ -70,19 +73,19 @@ fun StatusCard(state: UiState, onStart: () -> Unit, onStop: () -> Unit, onActiva
                     .size(10.dp)
                     .background(
                         when {
-                            state.healthy -> Color(0xFF4CAF50)
-                            state.running -> Color(0xFFFFB300)
+                            state.healthy || state.roomHealthy -> Color(0xFF4CAF50)
+                            state.running || state.roomActive -> Color(0xFFFFB300)
                             else -> Color(0xFF9E9E9E)
                         },
                         CircleShape,
                     ),
             )
             Spacer(Modifier.width(8.dp))
-            Text(state.statusTitle, style = MaterialTheme.typography.titleMedium)
+            Text(title, style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.weight(1f))
-            if (state.running) {
+            if (state.running || state.roomActive) {
                 OutlinedButton(onClick = onStop) { Text("Stop") }
-            } else if (state.hasIdentity) {
+            } else if (state.hasIdentity || state.hasRealtime) {
                 Button(onClick = onStart) { Text("Start") }
             } else {
                 // Without an identity there is nothing to start, so the primary action is the thing that creates one.
@@ -91,9 +94,9 @@ fun StatusCard(state: UiState, onStart: () -> Unit, onStop: () -> Unit, onActiva
                 }
             }
         }
-        if (state.statusDetail.isNotBlank()) {
+        if (detail.isNotBlank()) {
             Text(
-                state.statusDetail,
+                detail,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -106,9 +109,13 @@ fun StatusCard(state: UiState, onStart: () -> Unit, onStop: () -> Unit, onActiva
             )
         } else {
             Text(
-                "No device identity yet. Tap Activate to create one, or import the JSON from tools/cli activate.",
+                if (state.hasRealtime) {
+                    "No APNs identity: the room still works, but the Bark server stays off until you activate one."
+                } else {
+                    "No device identity yet. Tap Activate to create one, or import the JSON from tools/cli activate."
+                },
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
+                color = if (state.hasRealtime) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
             )
         }
         if (state.scopedToken.isNotBlank()) {

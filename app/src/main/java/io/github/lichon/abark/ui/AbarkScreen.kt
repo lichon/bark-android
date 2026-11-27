@@ -99,6 +99,8 @@ fun AbarkScreen(
                     onImport = { showImport = true },
                     onRequestNotifications = onRequestNotifications,
                     onOpenBatterySettings = onOpenBatterySettings,
+                    onRealtimeEnabled = viewModel::setRealtimeEnabled,
+                    onConnectRealtime = viewModel::connectRealtime,
                 )
 
                 AbarkTab.Messages -> MessagesTab(
